@@ -3,7 +3,6 @@ import shutil
 import os
 import sys
 
-# Add project root to python path so we can import 'src'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.storage import TacticalStore
@@ -44,7 +43,6 @@ class TestTacticalKnowledgeGraph(unittest.TestCase):
         
         self.ingest.ingest_sensor_data("alpha_1", raw_sensor)
         
-        # Verify the specific URIs from tactical.ttl are used
         s = "tac:unit:alpha_1"
         fuel_pred = "http://example.org/tactical#hasFuelLevel"
         
@@ -57,7 +55,6 @@ class TestTacticalKnowledgeGraph(unittest.TestCase):
         self.store.write_triple("unit:zombie", "status", "alive")
         self.store.close()
         
-        # Reopen
         new_store = TacticalStore(self.db_path)
         data = new_store.get_triple("unit:zombie", "status")
         self.assertEqual(data['value'], "alive")

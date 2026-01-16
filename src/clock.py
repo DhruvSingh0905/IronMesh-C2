@@ -1,12 +1,9 @@
-# src/clock.py
 import json
 
 class VectorClock:
     def __init__(self, node_id, clock_state=None):
         self.node_id = node_id
-        # State is a dict: {'NodeA': 1, 'NodeB': 2}
         self.clock = clock_state if clock_state else {}
-        # Ensure we exist in our own clock
         if self.node_id not in self.clock:
             self.clock[self.node_id] = 0
 
@@ -50,6 +47,6 @@ class VectorClock:
             if val_a > val_b: a_greater = True
             if val_b > val_a: b_greater = True
 
-        if a_greater and not b_greater: return 1  # A is newer
-        if b_greater and not a_greater: return -1 # B is newer
-        return 0 # Concurrent (Need tiebreaker)
+        if a_greater and not b_greater: return 1  
+        if b_greater and not a_greater: return -1 
+        return 0 

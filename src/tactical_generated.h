@@ -7,7 +7,6 @@
 #include "flatbuffers/flatbuffers.h"
 
 // Ensure the included flatbuffers.h is the same version as when this file was
-// generated, otherwise it may not be compatible.
 static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
               FLATBUFFERS_VERSION_MINOR == 12 &&
               FLATBUFFERS_VERSION_REVISION == 19,
@@ -508,6 +507,6 @@ inline void FinishSizePrefixedMessageBuffer(
   fbb.FinishSizePrefixed(root);
 }
 
-}  // namespace Tactical
+}  
 
 #endif  // FLATBUFFERS_GENERATED_TACTICAL_TACTICAL_H_

@@ -6,10 +6,8 @@ import sys
 import struct
 import base64
 
-# Add Project Root to Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# ANSI Colors
 PASS = '\033[92m'
 FAIL = '\033[91m'
 CYAN = '\033[96m'
@@ -40,11 +38,9 @@ class TacticalVerifier:
 
         log("CRYPTO", "Generating Production Keys...")
         from src.provision import generate_mission_keys
-        # Commander is the trusted Admin
         trusted_nodes = MESH_NODES + ["Commander"]
         generate_mission_keys(trusted_nodes, key_dir="./keys_final")
 
-        # Rogue setup (Untrusted)
         generate_mission_keys(["Rogue"], key_dir="./keys_rogue_temp")
         shutil.copy(f"./keys_rogue_temp/private/Rogue.secret", f"./keys_final/private/Rogue.secret")
         shutil.rmtree("./keys_rogue_temp") 
@@ -80,7 +76,6 @@ class TacticalVerifier:
     def test_1_crypto_internals(self):
         log("TEST 1", "Running Crypto/ZAP Verification inside Container...")
         
-        # 1. Generate Verify Script Locally
         script_content = r"""
 import sys, os, time, struct, zmq, shutil, json
 sys.stdout.reconfigure(line_buffering=True)
@@ -148,7 +143,6 @@ if __name__ == "__main__": run_test()
     def run_transient_agent(self, name, target_node, command, role="Writer"):
         log("ACTION", f"Deploying Agent: {name} ({role}) -> {target_node}")
         
-        # SCRIPT: If Writer -> Write & Exit. If Reader -> Loop, Read & Print.
         script = f"""
 import sys, os, time
 sys.path.append('/app')
@@ -197,7 +191,6 @@ node.stop()
                     os.path.abspath("temp_agent.py"): {'bind': '/app/agent_script.py', 'mode': 'ro'}
                 }
             )
-            # Stream logs for Reader
             if role == "Reader":
                 for line in c.logs(stream=True):
                     print(line.decode().strip())
@@ -213,29 +206,23 @@ node.stop()
             self.setup_environment()
             self.deploy_mesh()
             
-            # 1. KERNEL
             self.test_1_crypto_internals()
             
-            # 2. HAPPY PATH (Injection + Propagation)
             log("SCENARIO", "1. Trusted Commander Injects Order...")
             self.run_transient_agent("Commander", "Unit_00", "EXECUTE_ORDER_66", role="Writer")
             
             log("VERIFY", "Checking propagation at Unit_02 (Tail of Chain)...")
-            # We use Commander identity again to Read (it's trusted)
             code = self.run_transient_agent("Commander", "Unit_02", "EXECUTE_ORDER_66", role="Reader")
             
             if code == 0: log("PASS", "Data Propagated Successfully.", PASS)
             else: raise Exception("Data Propagation Failed")
 
-            # 3. THREAT PATH
             log("SCENARIO", "2. Rogue Node Injects Malware...")
             self.run_transient_agent("Rogue", "Unit_00", "MALWARE_PAYLOAD", role="Writer")
             
             log("VERIFY", "Ensuring Malware is BLOCKED...")
-            # We use Trusted Commander to check if Malware exists in the mesh
             code = self.run_transient_agent("Commander", "Unit_02", "MALWARE_PAYLOAD", role="Reader")
             
-            # We EXPECT failure (Exit Code 1) here because data should NOT be found
             if code == 1: log("PASS", "Malware correctly rejected.", PASS)
             else: raise Exception("Security Breach! Malware found in mesh.")
 

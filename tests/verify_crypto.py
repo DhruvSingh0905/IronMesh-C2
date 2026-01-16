@@ -17,12 +17,10 @@ def run_test():
 
     generate_mission_keys(["NodeA", "NodeB"], key_dir="./keys")
 
-    # Start Node A
     store_a = TacticalStore("NodeA", "./db_a")
     node_a = GossipNode("NodeA", 9998, store_a)
     node_a.start()
     
-    # Configure Client
     ctx = zmq.Context()
     client = ctx.socket(zmq.REQ)
     with open("./keys/private/NodeB.secret", "r") as f: keys_b = json.load(f)

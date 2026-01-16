@@ -1,35 +1,28 @@
 #!/bin/bash
 
-# 1. BUILD IMAGE
 echo "🐳 Building Docker Image..."
 docker build -t tactical-mesh:latest .
 
-# 2. GENERATE KEYS (Ensure they exist)
 python3 -c "from src.provision import generate_mission_keys; generate_mission_keys(['Alpha', 'Bravo', 'Charlie'])"
 
-# 3. CREATE K8S SECRET MANIFEST
 echo "🔐 Creating Secrets..."
 kubectl create secret generic tactical-keys --from-file=keys/private --from-file=keys/mission_trust.json --dry-run=client -o yaml > k8s/01-keys-secret.yaml
 
-# 4. GENERATE NODE MANIFESTS
 echo "📝 Generating Manifests..."
 NODES=("Alpha" "Bravo" "Charlie")
 
-# Create a master yaml file
 cat k8s/00-config.yaml > k8s/full-deployment.yaml
 echo "---" >> k8s/full-deployment.yaml
 cat k8s/01-keys-secret.yaml >> k8s/full-deployment.yaml
 
 for NODE in "${NODES[@]}"; do
-    # Generate Peers String (everyone talks to everyone)
     PEERS=""
     for PEER in "${NODES[@]}"; do
         if [ "$NODE" != "$PEER" ]; then
-            # Format: ID:HOSTNAME (Service Name is lowercase node name)
             PEERS+="${PEER}:${PEER,,},"
         fi
     done
-    PEERS=${PEERS%,} # Remove trailing comma
+    PEERS=${PEERS%,} 
     
     LOWER_NAME=${NODE,,}
     

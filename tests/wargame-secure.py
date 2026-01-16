@@ -8,7 +8,6 @@ import json
 import resource
 import logging
 
-# --- 1. SYSTEM PREP ---
 def boost_resources():
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -59,7 +58,6 @@ class WarGameUltimate:
     def kill_node(self, name):
         with self.lock:
             if name in self.nodes:
-                # Fire and forget. We don't care if it closes cleanly.
                 n = self.nodes[name]
                 s = self.stores[name]
                 threading.Thread(target=n.stop, daemon=True).start()
@@ -174,8 +172,6 @@ class WarGameUltimate:
             print("\n⚠️ Interrupted!")
         finally:
             print("\n☢️  [NUCLEAR OPTION] Forcing Immediate Process Termination...")
-            # FORCE KILL - No cleanup, no joining, no polite waiting.
-            # The OS handles closing sockets and files.
             os._exit(0)
 
     def audit(self):

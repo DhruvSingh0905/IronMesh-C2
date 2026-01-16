@@ -24,6 +24,7 @@ except: sys.exit(1)
 def log(tag, msg): print(f"\033[96m[{tag}]\033[0m {msg}")
 
 def prune_docker():
+    """Cleans up old containers and networks."""
     for c in client.containers.list(all=True):
         if "tactical-" in c.name: 
             try: c.remove(force=True) 
@@ -172,12 +173,18 @@ def main():
             setup_environment()
             build_image()
             containers = deploy_mesh()
+            
+            time.sleep(2)
             for name, c in containers.items(): c.reload()
+            
             game_loop(containers)
-        except KeyboardInterrupt: break
+            
+        except KeyboardInterrupt:
+            break
         finally:
             log("SHUTDOWN", "Cleaning up...")
             prune_docker()
+        
         if sys.exc_info()[0] == KeyboardInterrupt: break
 
 if __name__ == "__main__":

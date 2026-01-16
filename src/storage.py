@@ -44,7 +44,6 @@ class TacticalStore:
         options = Options()
         options.create_if_missing(True)
         
-        # --- SCALING OPTIMIZATION ---
         if max_open_files > 0:
             options.set_max_open_files(max_open_files)
         
@@ -168,7 +167,6 @@ class TacticalStore:
 
     def get_clock(self): return self.vc.to_dict()
     
-    # [NEW] Helper property for Observability Dashboard
     @property
     def vector_clock(self):
         """Returns the current Vector Clock as a dictionary."""

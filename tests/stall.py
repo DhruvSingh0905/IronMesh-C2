@@ -14,11 +14,9 @@ from src.gossip import GossipNode
 from src.provision import generate_mission_keys
 import src.config as cfg
 
-# --- CONFIG FOR DIAGNOSTIC ---
 cfg.GOSSIP_INTERVAL = 0.2
 cfg.ZMQ_RCV_TIMEOUT = 600
 
-# ANSI Colors
 GRAY = "\033[90m"
 RED = "\033[91m"
 GREEN = "\033[92m"
@@ -33,13 +31,12 @@ def socket_event_monitor(node_name, socket, ctx):
     monitor_url = f"inproc://monitor_{node_name}_{random.randint(1000,9999)}"
     socket.monitor(monitor_url, zmq.EVENT_ALL)
     
-    # Use the specific context passed in
     mon_sock = ctx.socket(zmq.PAIR)
     mon_sock.connect(monitor_url)
     
     while True:
         try:
-            if mon_sock.poll(100): # Non-blocking poll
+            if mon_sock.poll(100): 
                 event = zmq.utils.monitor.recv_monitor_message(mon_sock)
                 ev = event['event']
                 
@@ -71,7 +68,6 @@ def thread_heartbeat(node):
 def run_diagnostic():
     print("🔍 [DIAGNOSTIC] Starting Cluster Stress Monitor...")
     
-    # 1. Setup
     squad = ["Alpha", "Bravo", "Charlie"]
     generate_mission_keys(squad)
     
@@ -79,7 +75,6 @@ def run_diagnostic():
     stores = []
     
     try:
-        # 2. Launch Cluster
         print("   [STEP 1] Launching Nodes...")
         for i, name in enumerate(squad):
             if os.path.exists(f"./test_db_{name}"): shutil.rmtree(f"./test_db_{name}")
@@ -95,7 +90,6 @@ def run_diagnostic():
             nodes.append(n)
             stores.append(s)
             
-            # PASS THE CONTEXT EXPLICITLY
             threading.Thread(
                 target=socket_event_monitor, 
                 args=(name, n.router, n.context), 
@@ -106,7 +100,6 @@ def run_diagnostic():
             
             threading.Thread(target=thread_heartbeat, args=(n,), daemon=True).start()
 
-        # 3. Fire Traffic
         print("   [STEP 2] Firing High Velocity Traffic (50 updates each)...")
         time.sleep(1)
         
@@ -124,14 +117,12 @@ def run_diagnostic():
         for t in threads: t.join()
         print("   [STEP 3] Writes Complete. Entering Polling Phase...")
         
-        # 4. Watch for Convergence
         print("   [STEP 4] Watching for Convergence (20s)...")
         start = time.time()
         while time.time() - start < 20:
             sys.stdout.write(".")
             sys.stdout.flush()
             
-            # Check Alpha's view of Charlie
             data = stores[0].get_triple("u:Obj_Charlie", "p:stat")
             if data and data['o'] == "Val_49":
                 print(f"\n   {GREEN}✅ CONVERGENCE DETECTED!{RESET}")

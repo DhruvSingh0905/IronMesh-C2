@@ -30,7 +30,7 @@ class MeshSimulator:
     def cleanup_environment(self):
         print(f"🧹 [CLEANUP] Resetting environment...")
         os.system("rm -rf mesh_db_*")
-        os.system("rm -f cursor_*.json") # Nuke old cursors
+        os.system("rm -f cursor_*.json") 
         ports = ",".join([str(BASE_PORT + i) for i in range(10)])
         os.system(f"lsof -ti:{ports} | xargs kill -9 2>/dev/null")
         time.sleep(0.5)
@@ -40,7 +40,6 @@ class MeshSimulator:
         store = TacticalStore(name, db_path)
         node = GossipNode(name, port, store)
         
-        # Pre-seed Full Mesh (In real life, UDP does this)
         for peer_name in self.node_names:
             if peer_name == name: continue
             peer_port = BASE_PORT + self.node_names.index(peer_name)
@@ -72,7 +71,7 @@ class MeshSimulator:
 
     def traffic_generator(self):
         while self.running:
-            time.sleep(.20) # <--- THROTTLED: 1 write every 2s per node
+            time.sleep(.20) 
             if not self.active_names: continue
             actor = random.choice(self.active_names)
             store = self.stores[actor]
@@ -117,25 +116,22 @@ class MeshSimulator:
             t_traffic.join()
             t_chaos.join()
             
-            # Restore everyone
             for name in self.node_names:
                 if name in self.offline_names:
                     self.node_joins(name)
             
             print("--- WAITING FOR CONVERGENCE (20s) ---")
-            time.sleep(20) # Give them time to gossip the final state
+            time.sleep(20) 
             
             print("\n--- FINAL AUDIT ---")
             consistent = False
             
-            # Retry Audit Loop
             for attempt in range(3):
                 ref_val = None
                 is_ok = True
                 print(f"Audit Attempt {attempt+1}...")
                 
                 for name in self.node_names:
-                    # Re-open safely if needed
                     if not self.stores[name].db:
                          self.setup_node(name, BASE_PORT + self.node_names.index(name))
 

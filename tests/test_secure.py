@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.storage import TacticalStore
 from src.gossip import GossipNode
 from src.provision import generate_mission_keys
-import src.config as cfg # Import Config
+import src.config as cfg 
 
 class TestStressAndRecovery(unittest.TestCase):
     
@@ -32,13 +32,12 @@ class TestStressAndRecovery(unittest.TestCase):
     def tearDown(self):
         for n in self.nodes: n.stop()
         for s in self.stores: s.close()
-        time.sleep(1.0) # Give OS time to release ports
+        time.sleep(1.0) 
 
     def _spawn_cluster(self, names, base_port):
         cluster = {}
         for i, name in enumerate(names):
             s = TacticalStore(name, f"./test_db_{name}")
-            # Dynamic Port Assignment from Config
             n = GossipNode(name, base_port + i, s)
             peers = {}
             for other_i, other in enumerate(names):
@@ -54,7 +53,6 @@ class TestStressAndRecovery(unittest.TestCase):
     def test_1_high_velocity_convergence(self):
         print("\n[TEST 1] High Velocity Traffic (No Partition)")
         
-        # USE CONFIG PORT
         start_port = cfg.BASE_PORT
         cluster = self._spawn_cluster(self.squad, start_port)
         
@@ -104,21 +102,15 @@ class TestStressAndRecovery(unittest.TestCase):
     def test_2_partition_healing(self):
         print("\n[TEST 2] Partition & Healing")
         
-        # Offset ports for Test 2 to ensure no overlap with Test 1's zombies
-        # e.g., if BASE is 9000, this uses 9100
         start_port = cfg.BASE_PORT + 100
         cluster = self._spawn_cluster(self.squad, start_port)
         
         print("   -> Phase 1: Partitioning (Alpha) vs (Bravo, Charlie)")
         
-        # DYNAMIC PARTITIONING (No hardcoded ports)
-        # Alpha isolated
         cluster["Alpha"][0].peers = {} 
         
-        # Bravo sees Charlie (Base + 2)
         cluster["Bravo"][0].peers = {"Charlie": ("127.0.0.1", start_port + 2)} 
         
-        # Charlie sees Bravo (Base + 1)
         cluster["Charlie"][0].peers = {"Bravo": ("127.0.0.1", start_port + 1)}
         
         cluster["Alpha"][1].write_triple("u:Target_X", "p:color", "RED")

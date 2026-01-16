@@ -2,68 +2,49 @@ import zmq
 import zmq.auth
 import threading
 import time
-import msgpack
-import random
-import os
 import json
-import socket
 import logging
+import os
+import random
+import msgpack  
 from src.auth import TacticalAuthenticator
 import src.config as cfg
 
 class GossipNode:
-    def __init__(self, node_id, port, store, peers=None):
+    def __init__(self, node_id, base_port, store, peers=None):
         self.node_id = node_id
-        self.port = port
+        self.base_port = base_port
         self.store = store
-        self.peers = peers if peers else {} 
-        self.running = True
+        self.peers = peers or {} 
+        self.running = False
         self._stop_lock = threading.Lock()
-        
-        # Internal State
-        self.router = None 
-        self.sock_beacon_send = None
-        self.sock_beacon_recv = None
-        self.peer_sockets = {} 
-        self.peer_backoff = {} 
-        self.peer_failures = {}
-        
-        # Stats for monitoring
-        self.stats = {"tx_bytes": 0, "rx_bytes": 0, "syncs": 0}
 
-        # 1. SETUP ZMQ CONTEXT
         self.context = zmq.Context()
         self.context.setsockopt(zmq.MAX_SOCKETS, 1024)
         
-        # 2. LOAD IDENTITY (Curve25519)
-        self.keys_path = f"./keys/private/{node_id}.secret"
-        self.trust_path = "./keys/mission_trust.json"
-        
-        if not self._load_keys():
-            if not self._load_keys_fallback():
-                raise RuntimeError(f"[{node_id}] FATAL: No Mission Keys found at {self.keys_path}")
+        self.keys_path = f"/app/keys/private/{node_id}.secret"
+        if not os.path.exists(self.keys_path): 
+            self.keys_path = f"./keys/private/{node_id}.secret"
             
-        # 3. START AUTHENTICATOR (The Bouncer)
-        # [FIX] Corrected syntax and arguments for In-Memory Authenticator
+        if not self._load_keys():
+            raise RuntimeError(f"[{node_id}] FATAL: No Mission Keys found.")
+
+        self.trust_path = "/app/keys/mission_trust.json"
+        if not os.path.exists(self.trust_path): self.trust_path = "./keys/mission_trust.json"
+        
         self.auth = TacticalAuthenticator(self.context, trust_file=self.trust_path)
         self.auth.start()
+
+        self.poller = zmq.Poller()
         
-        # 4. LOAD CURSORS (Sync State)
-        self.cursor_file = f"./cursor_{node_id}.msgpack"
-        self.peer_cursors = self._load_cursors()
-        
-        # 5. CONFIGURE ROUTER (Server Socket)
-        self.router = self.context.socket(zmq.ROUTER)
-        self.router.curve_server = True 
-        self.router.curve_publickey = self.public_key.encode()
-        self.router.curve_secretkey = self.private_key.encode()
-        
-        # Security Settings
-        self.router.setsockopt(zmq.LINGER, 0)
-        self.router.setsockopt(zmq.RCVHWM, cfg.ZMQ_HWM) 
-        self.router.setsockopt(zmq.SNDHWM, cfg.ZMQ_HWM)
-        self.router.setsockopt(zmq.ZAP_DOMAIN, b"Global")
-        
+        self.bind_socks = {}
+        self._bind_lane(cfg.LANE_FLASH, "FLASH")
+        self._bind_lane(cfg.LANE_ROUTINE, "ROUTINE")
+        self._bind_lane(cfg.LANE_BULK, "BULK")
+
+        self.out_socks = {}
+        self._connect_mesh()
+
     def _load_keys(self):
         try:
             with open(self.keys_path, 'r') as f:
@@ -73,260 +54,179 @@ class GossipNode:
                 return True
         except: return False
 
-    def _load_keys_fallback(self):
-        try:
-            self.keys_path = f"/app/keys/private/{self.node_id}.secret"
-            return self._load_keys()
-        except: return False
-
-    def _load_cursors(self):
-        if os.path.exists(self.cursor_file):
-            try:
-                with open(self.cursor_file, 'rb') as f: return msgpack.unpack(f)
-            except: pass
-        return {}
-
-    def _save_cursors(self):
-        try:
-            with open(self.cursor_file, 'wb') as f: msgpack.pack(self.peer_cursors, f)
-        except: pass
-
-    def get_peer_public_key(self, peer_id):
-        # Thread-safe access to whitelist
-        return self.auth.whitelist.get(peer_id)
-
-    def start(self):
-        print(f"[{self.node_id}] SECURE UNIT ONLINE (Curve25519). Port {self.port}")
+    def _bind_lane(self, lane_offset, name):
+        """Binds a Secure ROUTER socket for a specific Priority Lane."""
+        sock = self.context.socket(zmq.ROUTER)
         
-        try: 
-            self.router.bind(f"tcp://0.0.0.0:{self.port}")
-        except Exception as e:
-            print(f"❌ [{self.node_id}] Bind Failed: {e}")
+        sock.curve_server = True
+        sock.curve_publickey = self.public_key.encode()
+        sock.curve_secretkey = self.private_key.encode()
+        sock.setsockopt(zmq.ZAP_DOMAIN, b"Global")
+        
+        port = self.base_port + lane_offset
+        try:
+            sock.bind(f"tcp://0.0.0.0:{port}")
+        except zmq.ZMQError as e:
+            print(f"❌ [{self.node_id}] Failed to bind {name} on {port}: {e}")
             return
 
-        self.t_reactor = threading.Thread(target=self._reactor_loop, daemon=True)
-        self.t_active = threading.Thread(target=self._gossip_active, daemon=True)
-        self.t_beacon = threading.Thread(target=self._beacon_loop, daemon=True)
-        self.t_listen = threading.Thread(target=self._beacon_listen, daemon=True)
+        sock.setsockopt(zmq.LINGER, 0)
+        self.poller.register(sock, zmq.POLLIN)
+        self.bind_socks[lane_offset] = sock
+        logging.info(f"[{self.node_id}] Listening on {name} Lane (Secure): :{port}")
+
+    def _connect_mesh(self):
+        """Creates 3 outbound DEALER sockets for each peer."""
+        for peer_id, (host, port) in self.peers.items():
+            self._connect_peer(peer_id, host, port)
+
+    def _connect_peer(self, peer_id, host, port):
+        if peer_id not in self.out_socks:
+            self.out_socks[peer_id] = {}
         
-        self.t_reactor.start()
-        self.t_active.start()
-        self.t_beacon.start()
-        self.t_listen.start()
+        peer_key = self.auth.whitelist.get(peer_id)
+        if not peer_key:
+            logging.warning(f"[{self.node_id}] Cannot connect to {peer_id}: No Key found.")
+            return
+
+        for lane in [cfg.LANE_FLASH, cfg.LANE_ROUTINE, cfg.LANE_BULK]:
+            target_port = port + lane
+            sock = self.context.socket(zmq.DEALER)
+            
+            sock.curve_serverkey = peer_key.encode()
+            sock.curve_publickey = self.public_key.encode()
+            sock.curve_secretkey = self.private_key.encode()
+            
+            sock.setsockopt(zmq.IDENTITY, self.node_id.encode())
+            sock.connect(f"tcp://{host}:{target_port}")
+            self.out_socks[peer_id][lane] = sock
+        
+        logging.info(f"[{self.node_id}] Linked to {peer_id} (3 Secure Lanes)")
+
+    def start(self):
+        self.running = True
+        print(f"[{self.node_id}] SECURE UNIT ONLINE (Triage Enabled).")
+        
+        threading.Thread(target=self._listen_loop, daemon=True).start()
+        threading.Thread(target=self._gossip_loop, daemon=True).start()
 
     def stop(self):
-        with self._stop_lock:
-            if not self.running: return
-            self.running = False
-        
-        if hasattr(self, 'auth'): self.auth.stop()
-        
-        threads = [
-            getattr(self, 't_reactor', None),
-            getattr(self, 't_active', None),
-            getattr(self, 't_beacon', None),
-            getattr(self, 't_listen', None)
-        ]
-        
-        for t in threads:
-            if t and t.is_alive():
-                t.join(timeout=0.2)
-        
-        for sock in self.peer_sockets.values():
-            try:
-                sock.setsockopt(zmq.LINGER, 0)
-                sock.close()
-            except: pass
-        self.peer_sockets.clear()
-        
-        if self.sock_beacon_send: 
-            try: self.sock_beacon_send.close()
-            except: pass
-        if self.sock_beacon_recv: 
-            try: self.sock_beacon_recv.close()
-            except: pass
-            
-        if self.router:
-            try:
-                self.router.setsockopt(zmq.LINGER, 0)
-                self.router.close()
-            except: pass
-        
-        try: self.context.term()
-        except: pass
-        
-        if self.store: self.store.close()
+        self.running = False
+        self.auth.stop()
+        self.context.term()
 
     def revoke_peer(self, peer_id):
-        print(f"⚔️ [{self.node_id}] INITIATING REVOCATION OF {peer_id}...")
+        """Executes the Kill Switch on a specific node."""
+        print(f"⚔️ [{self.node_id}] EXECUTE REVOCATION: {peer_id}")
         
-        success = self.auth.revoke_key(peer_id)
-        if not success:
-            print(f"   ⚠️ Peer {peer_id} not found in whitelist.")
+        self.auth.revoke_key(peer_id)
         
+        if peer_id in self.out_socks:
+            print(f"   ✂️ Cutting lanes to {peer_id}...")
+            lanes = self.out_socks[peer_id]
+            for sock in lanes.values():
+                sock.close()
+            del self.out_socks[peer_id]
+            
         if peer_id in self.peers:
             del self.peers[peer_id]
-            
-        if peer_id in self.peer_sockets:
-            print(f"   ✂️ Severing active connection to {peer_id}...")
-            try:
-                sock = self.peer_sockets[peer_id]
-                sock.setsockopt(zmq.LINGER, 0)
-                sock.close()
-                del self.peer_sockets[peer_id]
-            except: pass
-            
-        if peer_id in self.peer_backoff: del self.peer_backoff[peer_id]
-        if peer_id in self.peer_failures: del self.peer_failures[peer_id]
+
+    def broadcast_revocation(self, target_id):
+        """Initiates a Network-Wide Kill Switch."""
+        print(f"🚨 [{self.node_id}] BROADCASTING KILL SWITCH: {target_id}")
         
-        print(f"   🚫 {peer_id} has been neutralized.")
+        payload = {"target": target_id}
+        
+        peers = list(self.out_socks.keys())
+        for p in peers:
+            self.send(p, "REVOKE", payload, priority=cfg.LANE_FLASH)
+            
+        self.revoke_peer(target_id)
 
-    def _reactor_loop(self):
-        poller = zmq.Poller()
-        poller.register(self.router, zmq.POLLIN)
-        while self.running:
-            try:
-                if poller.poll(500):
-                    frames = self.router.recv_multipart()
-                    if len(frames) >= 3:
-                        self._handle_msg(frames[0], frames[-1])
-            except zmq.ContextTerminated: return
-            except Exception: pass
-
-    def _handle_msg(self, sender_id, payload_bytes):
+    def send(self, target_id, msg_type, payload, priority=cfg.LANE_ROUTINE):
+        if target_id not in self.out_socks: return
+        
+        envelope = {
+            "t": msg_type,
+            "p": payload,
+            "s": self.node_id,
+            "ts": time.time()
+        }
+        data = json.dumps(envelope).encode()
+        
+        if priority not in self.out_socks[target_id]: return
+        sock = self.out_socks[target_id][priority]
+        
         try:
-            self.stats['rx_bytes'] += len(payload_bytes)
-            req = msgpack.unpackb(payload_bytes)
-            
-            if req.get(b't') == b'SYNC':
-                seq = req.get(b'seq', 0)
-                updates, new_head = self.store.get_logs_since(seq)
-                resp = {b't': b'ACK', b'u': updates, b'h': new_head}
-                self.router.send_multipart([sender_id, b'', msgpack.packb(resp)])
-        except: pass
+            sock.send(data, flags=zmq.NOBLOCK)
+        except zmq.Again:
+            if priority == cfg.LANE_FLASH:
+                logging.warning(f"[{self.node_id}] CRITICAL: FLASH LANE CHOKED!")
 
-    def _gossip_active(self):
-        while self.running:
-            time.sleep(cfg.GOSSIP_INTERVAL) 
-            peers = list(self.peers.items())
-            if not peers: continue
-            random.shuffle(peers)
-            
-            now = time.time()
-            
-            for pid, (ip, port) in peers:
-                if pid in self.peer_backoff:
-                    if now < self.peer_backoff[pid]:
-                        continue 
-                    else:
-                        del self.peer_backoff[pid]
-                
-                target_key = self.get_peer_public_key(pid)
-                if not target_key: continue
-
-                if pid not in self.peer_sockets:
-                    try:
-                        sock = self.context.socket(zmq.REQ)
-                        sock.curve_serverkey = target_key.encode()
-                        sock.curve_publickey = self.public_key.encode()
-                        sock.curve_secretkey = self.private_key.encode()
-                        sock.setsockopt(zmq.LINGER, 0)
-                        sock.setsockopt(zmq.RCVTIMEO, cfg.ZMQ_RCV_TIMEOUT) 
-                        sock.connect(f"tcp://{ip}:{port}")
-                        self.peer_sockets[pid] = sock
-                    except: continue
-                
-                sock = self.peer_sockets[pid]
-
-                try:
-                    cursor = self.peer_cursors.get(pid, 0)
-                    sock.send(msgpack.packb({b't': b'SYNC', b'seq': cursor}))
-                    msg = sock.recv()
-                    data = msgpack.unpackb(msg)
-                    
-                    if data[b't'] == b'ACK':
-                        if data[b'u']:
-                            for up in data[b'u']:
-                                try: self.store.write_triple(up['s'], up['p'], up['o'], remote_clock=up.get('clock'))
-                                except: pass
-                            self.stats['syncs'] += 1
-                        self.peer_cursors[pid] = data[b'h']
-                        self._save_cursors()
-                        if pid in self.peer_failures: del self.peer_failures[pid]
-                        
-                except zmq.Again:
-                    self._handle_failure(pid, sock)
-                except Exception:
-                    self._handle_failure(pid, sock)
-
-    def _handle_failure(self, pid, sock):
-        try:
-            sock.setsockopt(zmq.LINGER, 0)
-            sock.close()
-        except: pass
-        if pid in self.peer_sockets: del self.peer_sockets[pid]
-        
-        fails = self.peer_failures.get(pid, 0) + 1
-        self.peer_failures[pid] = fails
-        
-        base_delay = 0.1 * (2 ** (fails - 1))
-        base_delay = min(base_delay, 2.0)
-        
-        jitter = random.uniform(0.9, 1.1)
-        cooldown = base_delay * jitter
-        
-        self.peer_backoff[pid] = time.time() + cooldown
-
-    def _beacon_loop(self):
-        self.sock_beacon_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock_beacon_send.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        while self.running:
-            try: 
-                msg = msgpack.packb({"i": self.node_id, "p": self.port})
-                self.sock_beacon_send.sendto(msg, ('<broadcast>', 9999))
-            except: pass
-            time.sleep(cfg.BEACON_INTERVAL)
-
-    def _beacon_listen(self):
-        self.sock_beacon_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock_beacon_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try: self.sock_beacon_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        except AttributeError: pass 
-        try: self.sock_beacon_recv.bind(('', 9999)) 
-        except: return 
+    def _listen_loop(self):
+        logging.info(f"[{self.node_id}] Triage Officer On Duty.")
         
         while self.running:
             try:
-                data, addr = self.sock_beacon_recv.recvfrom(1024)
-                info = msgpack.unpackb(data)
-                if info['i'] != self.node_id:
-                    self.peers[info['i']] = (addr[0], info['p'])
-            except: pass
+                events = dict(self.poller.poll(timeout=1000))
+            except: break
+
+            sock_flash = self.bind_socks[cfg.LANE_FLASH]
+            if sock_flash in events:
+                self._process_batch(sock_flash, "FLASH")
+                continue 
+
+            sock_routine = self.bind_socks[cfg.LANE_ROUTINE]
+            if sock_routine in events:
+                self._process_batch(sock_routine, "ROUTINE")
+
+            sock_bulk = self.bind_socks[cfg.LANE_BULK]
+            if sock_bulk in events:
+                self._process_batch(sock_bulk, "BULK")
+
+    def _process_batch(self, sock, lane_name):
+        try:
+            while True:
+                frames = sock.recv_multipart(flags=zmq.NOBLOCK)
+                if len(frames) >= 3:
+                    self._handle_msg(frames[-1], lane_name)
+        except zmq.Again:
+            pass 
+
+    def _handle_msg(self, msg_bytes, lane_name):
+        try:
+            msg = json.loads(msg_bytes.decode())
+            m_type = msg.get('t')
+            
+            if m_type == "REVOKE":
+                target = msg['p'].get('target')
+                print(f"⚡ [{self.node_id}] RECEIVED KILL ORDER ON {lane_name}: {target}")
+                self.revoke_peer(target)
+                return
+
+            if m_type == "triple":
+                p = msg['p']
+                self.store.write_triple(p['s'], p['p'], p['o'], remote_clock=p.get('vc'))
+                
+        except Exception as e:
+            logging.error(f"Bad Msg on {lane_name}: {e}")
+
+    def _gossip_loop(self):
+        while self.running:
+            time.sleep(cfg.GOSSIP_INTERVAL)
+            pass
 
     def dump_status(self):
-        """
-        Observability: Writes current Vector Clock to a JSON file
-        so the Dashboard can track convergence without locking the DB.
-        """
         status_path = os.path.join(os.path.dirname(self.store.db_path), "node_status.json")
-        
-        # We assume self.vector_clock is available (managed by your VectorClock class)
-        # If your store manages it, fetch it from there.
-        # For this implementation, we grab the latest clock state.
-        
         try:
-            # Create a simple summary of the node's knowledge state
             state = {
                 "node_id": self.node_id,
                 "timestamp": time.time(),
-                "vector_clock": self.store.vector_clock, # Ensure TacticalStore exposes this
-                "keys_count": len(self.store.db_path) # Pseudo-metric or actual count if tracked
+                "vector_clock": self.store.vector_clock,
+                "data_volume": self.store.repl_seq,
+                "peers_count": len(self.out_socks)
             }
-            
-            # Atomic Write
-            temp_path = f"{status_path}.tmp"
-            with open(temp_path, "w") as f:
-                json.dump(state, f)
-            os.replace(temp_path, status_path)
-        except Exception as e:
-            print(f"[ERROR] Failed to dump status: {e}")
+            temp = f"{status_path}.tmp"
+            with open(temp, "w") as f: json.dump(state, f)
+            os.replace(temp, status_path)
+        except: pass

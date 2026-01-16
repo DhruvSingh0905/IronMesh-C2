@@ -6,7 +6,6 @@ from src.gossip import GossipNode
 from src.provision import generate_mission_keys
 import shutil
 
-# ANSI Colors for internal logs
 GREEN = '\033[92m'; RED = '\033[91m'; RESET = '\033[0m'
 
 def event_monitor(monitor_socket):
@@ -34,11 +33,9 @@ def run_test():
     if os.path.exists("./keys_zmq_test"): shutil.rmtree("./keys_zmq_test")
     generate_mission_keys(["NodeA", "NodeB"], key_dir="./keys_zmq_test")
     
-    # Node A (Server)
     node_a = GossipNode("NodeA", 9990, TacticalStore("NodeA", "/data/zmq_test_a"))
     node_a.start()
     
-    # Node B (Client)
     node_b = GossipNode("NodeB", 9991, TacticalStore("NodeB", "/data/zmq_test_b"), peers={"NodeA": ("127.0.0.1", 9990)})
     print("🚀 [TEST] Starting Node B...")
     node_b.start()

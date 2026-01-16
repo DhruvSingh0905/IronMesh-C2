@@ -7,9 +7,6 @@ import random
 import json
 import resource
 
-# 1. SETUP FORENSICS
-# If the script hangs for more than 15s, this background thread will 
-# scream and print exactly where every thread is stuck.
 def watchdog(timeout=15):
     time.sleep(timeout)
     print("\n\n🚨 [WATCHDOG] DEADLOCK DETECTED! DUMPING THREAD STATES...")
@@ -19,11 +16,9 @@ def watchdog(timeout=15):
     print("❌ Process Frozen. Force Killing.")
     os._exit(1)
 
-# Start Watchdog immediately
 t_dog = threading.Thread(target=watchdog, daemon=True)
 t_dog.start()
 
-# --- STANDARD SETUP ---
 def boost_resources():
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -63,15 +58,12 @@ class DeadlockHunt:
             node.start()
 
     def kill_node(self, name):
-        # SIMULATE THE EXACT LOCKING PATTERN OF WARGAME
         print(f"   🔻 Killing {name} (Holding Lock?)...")
         with self.lock:
             if name in self.nodes:
                 n = self.nodes[name]
                 s = self.stores[name]
                 
-                # CRITICAL: We call stop() holding the lock. 
-                # If stop() waits for a thread that needs the lock, we die.
                 n.stop()
                 s.close()
                 del self.nodes[name]
@@ -84,7 +76,6 @@ class DeadlockHunt:
             time.sleep(0.5)
             target = random.choice(NODES)
             
-            # Flapping: Kill then Revive
             if target in self.nodes:
                 self.kill_node(target)
             else:
@@ -95,12 +86,10 @@ class DeadlockHunt:
         print(f"🚀 Launching {len(NODES)} Nodes...")
         for name in NODES: self.launch_node(name)
         
-        # Wire them up
         with self.lock:
             for name in self.nodes:
                 self.nodes[name].peers = {n: ('127.0.0.1', BASE_PORT+i) for i, n in enumerate(NODES) if n!=name}
 
-        # Start Chaos
         t_chaos = threading.Thread(target=self.chaos_thread)
         t_chaos.start()
 
@@ -114,7 +103,6 @@ class DeadlockHunt:
         t_chaos.join()
         
         print("   -> Stopping Nodes...")
-        # This is where we suspect the hang is
         active = list(self.nodes.values())
         for i, n in enumerate(active):
             print(f"      -> Stopping {n.node_id}...")

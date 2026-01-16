@@ -10,14 +10,13 @@ class TacticalAuthenticator(threading.Thread):
         super().__init__()
         self.context = context
         self.trust_file = trust_file
-        self.whitelist = {} # Map: node_id -> public_key
+        self.whitelist = {} 
         self.running = True
         self.daemon = True
         self.name = "ZAP-Handler"
         self.zap_socket = None 
-        self.lock = threading.Lock() # Thread safety for revocation
+        self.lock = threading.Lock() 
         
-        # Load initial keys
         self.reload_whitelist()
 
     def reload_whitelist(self):
@@ -42,7 +41,6 @@ class TacticalAuthenticator(threading.Thread):
             return False
 
     def run(self):
-        # ZAP Handler must run in a separate thread but share the Context
         self.zap_socket = self.context.socket(zmq.REP)
         self.zap_socket.linger = 0
         self.zap_socket.bind("inproc://zeromq.zap.01") 
@@ -52,7 +50,6 @@ class TacticalAuthenticator(threading.Thread):
 
         while self.running:
             try:
-                # Poll with timeout to check self.running regularly
                 events = dict(poller.poll(500))
                 if self.zap_socket in events:
                     msg = self.zap_socket.recv_multipart()
@@ -68,15 +65,12 @@ class TacticalAuthenticator(threading.Thread):
         if len(msg) < 6: return
         version, req_id, domain, address, identity, mechanism = msg[:6]
         
-        # If it's not CURVE, we just approve it (internal ZMQ signaling)
-        # unless you want strictly encrypted-only traffic.
         if mechanism != b"CURVE":
             self._send_reply(sock, version, req_id, "200", "OK")
             return
 
         client_key_bytes = msg[6]
         try:
-            # ZMQ passes raw bytes, we need Z85 string to compare with JSON
             client_key_z85 = zmq.utils.z85.encode(client_key_bytes).decode()
         except:
             self._deny(sock, version, req_id, "Invalid Key Format")
@@ -84,8 +78,6 @@ class TacticalAuthenticator(threading.Thread):
 
         is_trusted = False
         with self.lock:
-            # Check if this key exists in our trusted values
-            # (whitelist is node_id -> public_key)
             if client_key_z85 in self.whitelist.values():
                 is_trusted = True
         
