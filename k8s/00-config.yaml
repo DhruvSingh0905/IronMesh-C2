@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tactical-config
+data:
+  BASE_PORT: "9000"
+  GOSSIP_INTERVAL: "0.5"

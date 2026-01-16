@@ -1,0 +1,22 @@
+# TACTICAL MESH CONFIGURATION
+
+# --- NETWORK ---
+# CHANGED: 7000 -> 9000 to avoid macOS AirPlay conflict
+BASE_PORT = 9000 
+
+# Sweet Spot Settings
+GOSSIP_INTERVAL = 0.2      
+BEACON_INTERVAL = 1.0      
+ZMQ_HWM = 10000            
+ZMQ_RCV_TIMEOUT = 600     
+
+# --- SECURITY ---
+CURVE_ENABLED = True
+
+# --- STORAGE ---
+DB_WRITE_BUFFER = 64 * 1024 * 1024  
+COMPRESSION = "lz4"        
+
+# --- SIMULATION ---
+TRAFFIC_WRITE_INTERVAL = 0.1  
+TEST_CONVERGENCE_TIMEOUT = 30

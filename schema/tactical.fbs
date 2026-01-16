@@ -1,0 +1,32 @@
+namespace Tactical;
+
+union Payload { Update, Heartbeat, SyncReq }
+
+// Changed from struct to table to support String IDs
+table VectorClockEntry {
+  node_id: string;
+  seq: uint64;
+}
+
+table Update {
+  s: string;
+  p: string;
+  o: string;
+  clock: [VectorClockEntry]; // Vector of entries
+  source: string;
+}
+
+table Heartbeat {
+  node_id: string;
+  port: uint16;
+}
+
+table SyncReq {
+  last_seq: uint64;
+}
+
+table Message {
+  type: Payload;
+}
+
+root_type Message;
