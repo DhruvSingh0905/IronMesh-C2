@@ -15,10 +15,13 @@ import docker
 import networkx as nx
 import matplotlib.pyplot as plt
 
-COMMAND_FILE = os.path.join(PROJECT_ROOT, "sim_commands.json")
+# --- CONFIG (ABSOLUTE PATHS) ---
+COMMAND_FILE = "/tmp/ironmesh_commands.json"
+HEARTBEAT_FILE = "/tmp/ironmesh_heartbeat"
 
 st.set_page_config(page_title="IRONMESH C2", page_icon="🛡️", layout="wide")
 
+# --- CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #0b0c10; color: #c5c6c7; }
@@ -27,17 +30,35 @@ st.markdown("""
     .bulk { border-left: 4px solid #1f77b4; background-color: #111b2b; }
     div.stButton > button { width: 100%; border-radius: 5px; font-weight: bold; }
     div[data-testid="stMetricValue"] { font-size: 24px; color: #66fcf1; }
+    .status-box { padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
 try: client = docker.from_env()
 except: pass
 
+# --- HELPERS ---
+def check_connection():
+    """Checks if the Simulation Engine is writing heartbeats."""
+    if not os.path.exists(HEARTBEAT_FILE):
+        return False, "OFFLINE (No Heartbeat File)"
+    try:
+        with open(HEARTBEAT_FILE, "r") as f:
+            last_beat = float(f.read())
+        if time.time() - last_beat > 3:
+            return False, f"STALLED ({int(time.time() - last_beat)}s ago)"
+        return True, "ONLINE"
+    except:
+        return False, "ERROR"
+
 def send_command(cmd_type, **kwargs):
     payload = {"cmd": cmd_type, **kwargs}
     try:
-        with open(COMMAND_FILE, "w") as f:
+        # Atomic Write (Write to temp then rename) prevents partial reads
+        temp_cmd = f"{COMMAND_FILE}.tmp"
+        with open(temp_cmd, "w") as f:
             json.dump(payload, f)
+        os.replace(temp_cmd, COMMAND_FILE)
         st.toast(f"✅ Uplink Sent: {cmd_type}")
     except Exception as e:
         st.error(f"Failed to write command: {e}")
@@ -52,17 +73,25 @@ def get_node_status(container):
 def get_mission_state():
     if os.path.exists(STATE_FILE):
         try: 
-            with open(STATE_FILE, "r") as f: 
-                return json.load(f)
-        except: 
-            pass
+            with open(STATE_FILE, "r") as f: return json.load(f)
+        except: pass
     return {"phase": "OFFLINE", "status": "Waiting...", "events": [], "telemetry": []}
 
+# --- MAIN HUD ---
 state = get_mission_state()
 phase = state.get("phase", "OFFLINE")
+sim_connected, sim_status = check_connection()
 
-st.markdown(f"### 🛡️ ACTIVE MISSION: {phase} | {state.get('status', '')}")
+# Header
+c_head, c_status = st.columns([3, 1])
+c_head.markdown(f"### 🛡️ ACTIVE MISSION: {phase} | {state.get('status', '')}")
 
+if sim_connected:
+    c_status.markdown(f'<div class="status-box" style="background-color: #0f380f; color: #00ff00; border: 1px solid #00ff00;">LINK: {sim_status}</div>', unsafe_allow_html=True)
+else:
+    c_status.markdown(f'<div class="status-box" style="background-color: #380f0f; color: #ff0000; border: 1px solid #ff0000;">LINK: {sim_status}</div>', unsafe_allow_html=True)
+
+# 1. GATHER DATA
 containers = client.containers.list(all=True)
 tactical_nodes = sorted([c for c in containers if "tactical-" in c.name], key=lambda x: x.name)
 node_data = []
@@ -74,12 +103,12 @@ for c in tactical_nodes:
             s['name'] = c.name.replace("tactical-unit-", "U").replace("tactical-", "").upper()
             node_data.append(s)
 
+# --- SIDEBAR: DYNAMIC COMMAND CENTER ---
 with st.sidebar:
     st.header("📡 SatCom Uplink")
     
     available_nodes = [n['name'] for n in node_data] if node_data else ["Unit_00"]
-    satcom_node = st.selectbox("Active Uplink Node", available_nodes, index=0, help="Which unit currently has SatCom access?")
-    
+    satcom_node = st.selectbox("Active Uplink Node", available_nodes, index=0)
     sender_id = f"Unit_{satcom_node.replace('U', '')}" 
 
     st.divider()
@@ -109,7 +138,6 @@ with st.sidebar:
     st.subheader("4. IronHouse Security")
     target_revoke = st.selectbox("Revoke Target", available_nodes, index=len(available_nodes)-1 if available_nodes else 0)
     target_revoke_id = f"Unit_{target_revoke.replace('U', '')}"
-    
     if st.button(f"🚨 KILL SWITCH: {target_revoke}"):
         send_command("INJECT", sender=sender_id, target=target_revoke_id, type="REVOKE", payload=target_revoke_id)
         
@@ -117,6 +145,7 @@ with st.sidebar:
     if st.button("RESET SIMULATION"):
         send_command("RESET")
 
+# --- METRICS ROW ---
 if node_data:
     t_flash = sum(n.get('lane_stats', {}).get('FLASH', {}).get('rx', 0) for n in node_data)
     t_bulk = sum(n.get('lane_stats', {}).get('BULK', {}).get('rx', 0) for n in node_data)
@@ -130,7 +159,6 @@ if node_data:
     m3.metric("BULK TRAFFIC", f"{t_bulk/1024:.1f} KB", delta="Background")
     m4.metric("SYNC SCORE", f"{last_score}%")
 
-    # --- DEBUG SECTION ---
     with st.expander("🔎 Raw Telemetry Debug"):
         st.write("Real-time byte counters from Docker containers:")
         debug_rows = []
@@ -146,6 +174,7 @@ if node_data:
 
 st.markdown("---")
 
+# --- VISUALIZATION ---
 c1, c2 = st.columns([3, 2])
 
 with c1:

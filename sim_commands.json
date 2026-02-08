@@ -1,1 +1,0 @@
-{"cmd": "INJECT", "sender": "Unit_00", "target": "Unit_01", "type": "FLASH", "payload": "UNIT_TEST_BURST", "repeat": 50}

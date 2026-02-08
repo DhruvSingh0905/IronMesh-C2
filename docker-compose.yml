@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # --- VISUALIZATION ENGINE ---
+  weave-scope:
+    image: weaveworks/scope:latest
+    container_name: weave-scope
+    network_mode: "host"
+    pid: "host"
+    privileged: true
+    labels:
+      - "works.weave.role=system"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:rw"
+    command:
+      - "--probe.docker=true"
+
+  # --- TACTICAL MESH NODES ---
+  unit-00:
+    image: tactical-mesh:latest
+    container_name: tactical-unit-00
+    environment:
+      - NODE_ID=Unit_00
+      - PEERS=Unit_01:tactical-unit-01:9000
+    volumes:
+      - ./keys_wargame:/app/keys:ro
+      - ./src:/app/src:ro
+      - ./main.py:/app/main.py:ro
+    command: ["python", "main.py"]
+
+  unit-01:
+    image: tactical-mesh:latest
+    container_name: tactical-unit-01
+    environment:
+      - NODE_ID=Unit_01
+      - PEERS=Unit_00:tactical-unit-00:9000,Unit_02:tactical-unit-02:9000
+    volumes:
+      - ./keys_wargame:/app/keys:ro
+      - ./src:/app/src:ro
+      - ./main.py:/app/main.py:ro
+    command: ["python", "main.py"]
+
+  unit-02:
+    image: tactical-mesh:latest
+    container_name: tactical-unit-02
+    environment:
+      - NODE_ID=Unit_02
+      - PEERS=Unit_01:tactical-unit-01:9000,Unit_03:tactical-unit-03:9000
+    volumes:
+      - ./keys_wargame:/app/keys:ro
+      - ./src:/app/src:ro
+      - ./main.py:/app/main.py:ro
+    command: ["python", "main.py"]
+    
+  unit-03:
+    image: tactical-mesh:latest
+    container_name: tactical-unit-03
+    environment:
+      - NODE_ID=Unit_03
+      - PEERS=Unit_02:tactical-unit-02:9000,Unit_04:tactical-unit-04:9000
+    volumes:
+      - ./keys_wargame:/app/keys:ro
+      - ./src:/app/src:ro
+      - ./main.py:/app/main.py:ro
+    command: ["python", "main.py"]
+
+  unit-04:
+    image: tactical-mesh:latest
+    container_name: tactical-unit-04
+    environment:
+      - NODE_ID=Unit_04
+      - PEERS=Unit_03:tactical-unit-03:9000,Unit_00:tactical-unit-00:9000
+    volumes:
+      - ./keys_wargame:/app/keys:ro
+      - ./src:/app/src:ro
+      - ./main.py:/app/main.py:ro
+    command: ["python", "main.py"]

@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tactical-config
+data:
+  BASE_PORT: "9000"
+  GOSSIP_INTERVAL: "0.5"
+---
+apiVersion: v1
+data:
+  Alpha.secret: ewogICJub2RlX2lkIjogIkFscGhhIiwKICAicHVibGljIjogIkdRWUxaaDgxbUI6WVM3LmZBZEIxcnJ6PC5jfUZ4YzA3JVp9YSsvaTMiLAogICJwcml2YXRlIjogInZHQlEwL0ZiTTRHQ2dmZT8wKEZeRTd3bEFPPDo0I0k9UT1xLS1jNlQiCn0=
+  Bravo.secret: ewogICJub2RlX2lkIjogIkJyYXZvIiwKICAicHVibGljIjogIi4oOi5GajAvdTBIOShQWy1HS1dDa0ZAJjFMNndaak02I099MD1LNnEiLAogICJwcml2YXRlIjogIjxtOCNWIUx1Q3k1dC1iWU8tLyZ9MGJ5TjxzamtdYkoqZD5SYm5bcFciCn0=
+  Charlie.secret: ewogICJub2RlX2lkIjogIkNoYXJsaWUiLAogICJwdWJsaWMiOiAieChUPUBqPEwmI3hsNmppS1JLUm1BcDNxTktTZj95SFReWGQ/RHdSeyIsCiAgInByaXZhdGUiOiAiQlt9UUVLS3MyUGxrdUBTUElVOn03MytaMS5YcVstPGwwJmJYd3s6ayIKfQ==
+  mission_trust.json: ewogICJBbHBoYSI6ICJHUVlMWmg4MW1COllTNy5mQWRCMXJyejwuY31GeGMwNyVafWErL2kzIiwKICAiQnJhdm8iOiAiLig6LkZqMC91MEg5KFBbLUdLV0NrRkAmMUw2d1pqTTYjT30wPUs2cSIsCiAgIkNoYXJsaWUiOiAieChUPUBqPEwmI3hsNmppS1JLUm1BcDNxTktTZj95SFReWGQ/RHdSeyIKfQ==
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: tactical-keys
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpha
+spec:
+  clusterIP: None
+  selector:
+    app: tactical-mesh
+    node: alpha
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpha
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tactical-mesh
+      node: alpha
+  template:
+    metadata:
+      labels:
+        app: tactical-mesh
+        node: alpha
+    spec:
+      containers:
+      - name: node
+        image: tactical-mesh:latest
+        imagePullPolicy: Never
+        env:
+        - name: NODE_ID
+          value: "Alpha"
+        - name: PEERS
+          value: "Bravo:bravo:9000,Charlie:charlie:9000"
+        ports:
+        - containerPort: 9000
+        volumeMounts:
+        - name: keys
+          mountPath: "/app/keys/mission_trust.json"
+          subPath: mission_trust.json
+          readOnly: true
+        - name: keys
+          mountPath: "/app/keys/private"
+          readOnly: true
+        - name: data
+          mountPath: "/data"
+      volumes:
+      - name: keys
+        secret:
+          secretName: tactical-keys
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bravo
+spec:
+  clusterIP: None
+  selector:
+    app: tactical-mesh
+    node: bravo
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bravo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tactical-mesh
+      node: bravo
+  template:
+    metadata:
+      labels:
+        app: tactical-mesh
+        node: bravo
+    spec:
+      containers:
+      - name: node
+        image: tactical-mesh:latest
+        imagePullPolicy: Never
+        env:
+        - name: NODE_ID
+          value: "Bravo"
+        - name: PEERS
+          value: "Alpha:alpha:9000,Charlie:charlie:9000"
+        ports:
+        - containerPort: 9000
+        volumeMounts:
+        - name: keys
+          mountPath: "/app/keys/mission_trust.json"
+          subPath: mission_trust.json
+          readOnly: true
+        - name: keys
+          mountPath: "/app/keys/private"
+          readOnly: true
+        - name: data
+          mountPath: "/data"
+      volumes:
+      - name: keys
+        secret:
+          secretName: tactical-keys
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: charlie
+spec:
+  clusterIP: None
+  selector:
+    app: tactical-mesh
+    node: charlie
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: charlie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tactical-mesh
+      node: charlie
+  template:
+    metadata:
+      labels:
+        app: tactical-mesh
+        node: charlie
+    spec:
+      containers:
+      - name: node
+        image: tactical-mesh:latest
+        imagePullPolicy: Never
+        env:
+        - name: NODE_ID
+          value: "Charlie"
+        - name: PEERS
+          value: "Alpha:alpha:9000,Bravo:bravo:9000"
+        ports:
+        - containerPort: 9000
+        volumeMounts:
+        - name: keys
+          mountPath: "/app/keys/mission_trust.json"
+          subPath: mission_trust.json
+          readOnly: true
+        - name: keys
+          mountPath: "/app/keys/private"
+          readOnly: true
+        - name: data
+          mountPath: "/data"
+      volumes:
+      - name: keys
+        secret:
+          secretName: tactical-keys
+      - name: data
+        emptyDir: {}

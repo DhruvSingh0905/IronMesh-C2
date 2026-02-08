@@ -1,184 +1,93 @@
-import docker
-import time
 import os
-import shutil
+import time
 import sys
-import json
-import random
+import signal
+import logging
+import threading
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(PROJECT_ROOT)
+# Add project root to path so we can import 'src'
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-from src.mission_clock import MissionClock
+from src.storage import TacticalStore
+from src.gossip import GossipNode
+from src.traffic import TrafficGenerator
+import src.config as cfg
 
-IMAGE_NAME = "tactical-mesh:latest"
-NETWORK_NAME = "tactical-net"
-NODE_COUNT = 5
-NODES = [f"Unit_{i:02d}" for i in range(NODE_COUNT)]
+# Logging Setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-COMMAND_FILE = os.path.join(PROJECT_ROOT, "sim_commands.json")
+# Global References
+NODE = None
+TRAFFIC = None
 
-try: client = docker.from_env()
-except: sys.exit(1)
-
-def log(tag, msg): print(f"\033[96m[{tag}]\033[0m {msg}")
-
-def prune_docker():
-    for c in client.containers.list(all=True):
-        if "tactical-" in c.name: 
-            try: c.remove(force=True) 
-            except: pass
-    try: 
-        for n in client.networks.list(names=[NETWORK_NAME]): n.remove()
-    except: pass
-
-def setup_environment():
-    MissionClock.update("PREP", "Initializing Interactive Sim...")
-    
-    keys_dir = os.path.join(PROJECT_ROOT, 'keys_wargame')
-    if os.path.exists(keys_dir): shutil.rmtree(keys_dir)
-    
-    from src.provision import generate_mission_keys
-    generate_mission_keys(NODES, key_dir=keys_dir)
-    
-    if os.path.exists(COMMAND_FILE): os.remove(COMMAND_FILE)
-    
-    prune_docker()
-
-def build_image():
-    log("BUILD", "Compiling & Packaging...")
-    client.images.build(path=PROJECT_ROOT, tag=IMAGE_NAME, rm=True)
-
-def deploy_mesh():
-    MissionClock.update("DEPLOY", f"Launching {NODE_COUNT} Nodes...")
-    try: client.networks.create(NETWORK_NAME, driver="bridge")
-    except: pass
-    
-    containers = {}
-    keys_abs = os.path.join(PROJECT_ROOT, 'keys_wargame')
-    
-    for i, node in enumerate(NODES):
-        peers = [f"{n}:tactical-{n.lower().replace('_','-')}:{9000}" for n in NODES if n != node]
-        
-        c = client.containers.run(
-            IMAGE_NAME,
-            name=f"tactical-{node.lower().replace('_','-')}",
-            detach=True,
-            network=NETWORK_NAME,
-            command=["python", "main.py"], 
-            environment={
-                "NODE_ID": node,
-                "PEERS": ",".join(peers),
-                "TRAFFIC_MODE": "TRUE",
-                "TRAFFIC_RATE": "1.0",
-                "PYTHONUNBUFFERED": "1"
-            },
-            volumes={
-                f"{keys_abs}/private": {'bind': '/app/keys/private', 'mode': 'ro'},
-                f"{keys_abs}/mission_trust.json": {'bind': '/app/keys/mission_trust.json', 'mode': 'ro'}
-            }
-        )
-        containers[node] = c
-    return containers
-
-def execute_inject(containers, cmd):
-    sender = cmd.get("sender", "Unit_00")
-    target = cmd.get("target", "Unit_01")
-    msg_type = cmd.get("type", "FLASH")
-    payload = cmd.get("payload", "CONFIRMED")
-    repeat = cmd.get("repeat", 1) 
-    
-    log("ACTION", f"{sender} -> {target} [{msg_type}] x {repeat}")
-    
-    try:
-        c = containers[sender]
-        exec_cmd = (
-            f"python src/inject.py "
-            f"--sender {sender} --target {target} "
-            f"--type {msg_type} --payload {payload} "
-            f"--repeat {repeat}"
-        )
-        c.exec_run(exec_cmd, detach=True)
-    except Exception as e:
-        log("FAIL", f"Injection failed: {e}")
-
-def execute_storm(containers, cmd):
-    rate = float(cmd.get("rate", "1.0"))
-    log("STORM", f"Simulating Traffic Intensity: {rate}")
-    if rate > 2.0:
-        for _ in range(15):
-            sender = random.choice(list(containers.keys()))
-            target = random.choice(list(containers.keys()))
-            if sender != target:
-                containers[sender].exec_run(
-                    f"python src/inject.py --sender {sender} --target {target} --type BULK --payload STORM_DATA --repeat 5", 
-                    detach=True
-                )
-
-def execute_chaos(containers, cmd):
-    target = cmd.get("target")
-    action = cmd.get("action") 
-    network = client.networks.get(NETWORK_NAME)
-    
-    if action == "KILL":
-        log("CHAOS", f"Cutting connection to {target}")
-        try: network.disconnect(containers[target])
-        except: pass
-    elif action == "REVIVE":
-        log("CHAOS", f"Restoring connection to {target}")
-        try: network.connect(containers[target])
-        except: pass
-
-def game_loop(containers):
-    log("READY", f"Listening for commands at {COMMAND_FILE}")
-    MissionClock.update("LIVE", "System Online. Awaiting Orders.")
-    
-    while True:
-        try:
-            if os.path.exists(COMMAND_FILE):
-                try:
-                    with open(COMMAND_FILE, "r") as f:
-                        cmd_data = json.load(f)
-                except json.JSONDecodeError:
-                    cmd_data = {}
-
-                try: os.remove(COMMAND_FILE)
-                except: pass
-                
-                action = cmd_data.get("cmd")
-                
-                if action == "INJECT":
-                    MissionClock.update("COMBAT", f"Flash Traffic: {cmd_data.get('type')}")
-                    execute_inject(containers, cmd_data)
-                elif action == "STORM":
-                    MissionClock.update("ALERT", f"Traffic Surge: {cmd_data.get('rate')}")
-                    execute_storm(containers, cmd_data)
-                elif action == "CHAOS":
-                    MissionClock.update("ALERT", f"Network Event: {cmd_data.get('target')}")
-                    execute_chaos(containers, cmd_data)
-                elif action == "RESET":
-                    MissionClock.clear()
-                    return 
-
-            time.sleep(0.5)
-        except KeyboardInterrupt: break
-        except Exception as e:
-            print(f"Loop Error: {e}")
-            time.sleep(1)
+def handle_sigterm(signum, frame):
+    print(f"\n🛑 [SYSTEM] Received Signal {signum}. Shutting down...")
+    if TRAFFIC: TRAFFIC.stop()
+    if NODE: NODE.stop()
+    sys.exit(0)
 
 def main():
-    while True:
-        try:
-            setup_environment()
-            build_image()
-            containers = deploy_mesh()
-            for name, c in containers.items(): c.reload()
-            game_loop(containers)
-        except KeyboardInterrupt: break
-        finally:
-            log("SHUTDOWN", "Cleaning up...")
-            prune_docker()
-        if sys.exc_info()[0] == KeyboardInterrupt: break
+    global NODE, TRAFFIC
+    
+    # 1. READ CONFIG FROM ENV
+    node_id = os.getenv("NODE_ID")
+    if not node_id:
+        print("❌ FATAL: NODE_ID environment variable not set.")
+        sys.exit(1)
+        
+    peers_env = os.getenv("PEERS", "")
+    traffic_mode = os.getenv("TRAFFIC_MODE", "FALSE").lower() == "true"
+    
+    try:
+        traffic_rate = float(os.getenv("TRAFFIC_RATE", "1.0"))
+    except ValueError:
+        traffic_rate = 1.0
+    
+    print(f"🚀 [BOOT] Starting Tactical Node: {node_id}")
+    
+    # 2. SETUP STORAGE
+    db_path = f"/data/{node_id}_db"
+    store = TacticalStore(node_id, db_path)
+    
+    # 3. PARSE PEERS
+    peers = {}
+    if peers_env:
+        for p in peers_env.split(","):
+            if ":" in p:
+                parts = p.split(":")
+                # Support "ID:HOST" or "ID:HOST:PORT"
+                p_id = parts[0]
+                p_host = parts[1]
+                p_port = int(parts[2]) if len(parts) > 2 else 9000
+                peers[p_id] = (p_host, p_port)
+
+    # 4. LAUNCH GOSSIP NODE
+    NODE = GossipNode(node_id, 9000, store, peers=peers)
+    
+    # 5. LAUNCH TRAFFIC GENERATOR
+    TRAFFIC = TrafficGenerator(node_id, NODE, active=traffic_mode, rate=traffic_rate)
+
+    # Register Signal Handlers
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    signal.signal(signal.SIGINT, handle_sigterm)
+    
+    NODE.start()
+    TRAFFIC.start()
+    
+    print(f"✅ [SYSTEM] Online. Peers: {len(peers)} | Traffic: {traffic_mode} @ {traffic_rate}Hz")
+    
+    try:
+        while True:
+            NODE.dump_status()
+            # Heartbeat file for Docker Healthcheck
+            with open("/tmp/healthy", "w") as f: 
+                f.write(str(time.time()))
+            time.sleep(1)
+            
+    except KeyboardInterrupt: pass
+    finally:
+        if TRAFFIC: TRAFFIC.stop()
+        if NODE: NODE.stop()
 
 if __name__ == "__main__":
     main()

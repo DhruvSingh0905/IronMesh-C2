@@ -7,9 +7,10 @@
 #include "flatbuffers/flatbuffers.h"
 
 // Ensure the included flatbuffers.h is the same version as when this file was
-static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
-              FLATBUFFERS_VERSION_MINOR == 12 &&
-              FLATBUFFERS_VERSION_REVISION == 19,
+// generated, otherwise it may not be compatible.
+static_assert(FLATBUFFERS_VERSION_MAJOR == 23 &&
+              FLATBUFFERS_VERSION_MINOR == 5 &&
+              FLATBUFFERS_VERSION_REVISION == 26,
              "Non-compatible flatbuffers version included");
 
 namespace Tactical {
@@ -81,10 +82,8 @@ template<> struct PayloadTraits<Tactical::SyncReq> {
   static const Payload enum_value = Payload_SyncReq;
 };
 
-template <bool B = false>
-bool VerifyPayload(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, Payload type);
-template <bool B = false>
-bool VerifyPayloadVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
+bool VerifyPayload(::flatbuffers::Verifier &verifier, const void *obj, Payload type);
+bool VerifyPayloadVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
 
 struct VectorClockEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef VectorClockEntryBuilder Builder;
@@ -98,8 +97,7 @@ struct VectorClockEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t seq() const {
     return GetField<uint64_t>(VT_SEQ, 0);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_NODE_ID) &&
            verifier.VerifyString(node_id()) &&
@@ -174,8 +172,7 @@ struct Update FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *source() const {
     return GetPointer<const ::flatbuffers::String *>(VT_SOURCE);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_S) &&
            verifier.VerifyString(s()) &&
@@ -271,8 +268,7 @@ struct Heartbeat FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint16_t port() const {
     return GetField<uint16_t>(VT_PORT, 0);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_NODE_ID) &&
            verifier.VerifyString(node_id()) &&
@@ -331,8 +327,7 @@ struct SyncReq FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t last_seq() const {
     return GetField<uint64_t>(VT_LAST_SEQ, 0);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_LAST_SEQ, 8) &&
            verifier.EndTable();
@@ -387,8 +382,7 @@ struct Message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const Tactical::SyncReq *type_as_SyncReq() const {
     return type_type() == Tactical::Payload_SyncReq ? static_cast<const Tactical::SyncReq *>(type()) : nullptr;
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_TYPE_TYPE, 1) &&
            VerifyOffset(verifier, VT_TYPE) &&
@@ -440,8 +434,7 @@ inline ::flatbuffers::Offset<Message> CreateMessage(
   return builder_.Finish();
 }
 
-template <bool B>
-inline bool VerifyPayload(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, Payload type) {
+inline bool VerifyPayload(::flatbuffers::Verifier &verifier, const void *obj, Payload type) {
   switch (type) {
     case Payload_NONE: {
       return true;
@@ -462,8 +455,7 @@ inline bool VerifyPayload(::flatbuffers::VerifierTemplate<B> &verifier, const vo
   }
 }
 
-template <bool B>
-inline bool VerifyPayloadVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types) {
+inline bool VerifyPayloadVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types) {
   if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
   for (::flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
@@ -483,16 +475,14 @@ inline const Tactical::Message *GetSizePrefixedMessage(const void *buf) {
   return ::flatbuffers::GetSizePrefixedRoot<Tactical::Message>(buf);
 }
 
-template <bool B = false>
 inline bool VerifyMessageBuffer(
-    ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifyBuffer<Tactical::Message>(nullptr);
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifyBuffer<Tactical::Message>(nullptr);
 }
 
-template <bool B = false>
 inline bool VerifySizePrefixedMessageBuffer(
-    ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifySizePrefixedBuffer<Tactical::Message>(nullptr);
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifySizePrefixedBuffer<Tactical::Message>(nullptr);
 }
 
 inline void FinishMessageBuffer(
@@ -507,6 +497,6 @@ inline void FinishSizePrefixedMessageBuffer(
   fbb.FinishSizePrefixed(root);
 }
 
-}  
+}  // namespace Tactical
 
 #endif  // FLATBUFFERS_GENERATED_TACTICAL_TACTICAL_H_

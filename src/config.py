@@ -1,10 +1,9 @@
-
 # --- NETWORK ---
 BASE_PORT = 9000 
 
-LANE_FLASH = 0   
-LANE_ROUTINE = 1 
-LANE_BULK = 2    
+LANE_FLASH = 1   # Port 9001 (Priority)
+LANE_ROUTINE = 0 # Port 9000 (Standard Gossip)
+LANE_BULK = 2    # Port 9002 (Background)
 
 GOSSIP_INTERVAL = 0.2      
 BEACON_INTERVAL = 1.0      
